@@ -35,14 +35,13 @@ std::vector<std::string> get_file_data(const std::string& file_path,
         exit(1);
     }
 
-    while (file) {
-        std::string str_input{};
-        getline(file, str_input);
+    std::string file_line{};
+    while (getline(file, file_line)) {
         for (const std::string_view word : substring) {
-            const unsigned long result{str_input.find(word)};
+            const unsigned long result{file_line.find(word)};
 
             if (result != std::string_view::npos) {
-                file_data.push_back(str_input);
+                file_data.push_back(file_line);
                 continue;
             }
         }
