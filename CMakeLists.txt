@@ -19,7 +19,7 @@ add_executable(Telemetry-App ./main.cpp)
 target_link_libraries(Telemetry-App PRIVATE Telemetry-Engine)
 
 # High-signal C++ Core Guidelines warning flags for GCC & Clang
-target_compile_options(Telemetry-App PRIVATE
+target_compile_options(Telemetry-Engine PRIVATE
     -Wall
     -Wextra
     -Wpedantic

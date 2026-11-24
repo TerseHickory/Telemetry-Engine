@@ -1,85 +1,110 @@
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <span>
-#include <stdio.h>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
-std::vector<std::string> get_file_data(const std::string& file_path,
-                                       const std::vector<std::string_view> substring);
-std::vector<std::string_view> parse_data(std::string_view line, const char* delimiters);
-std::vector<std::vector<std::string_view>>
-create_data_list(const std::vector<std::string_view>& file_data, const char delimiters);
+using namespace std::chrono;
 
 struct cpu {
     std::string name_;
-    std::string user_time_;
-    std::string nice_time_;
-    std::string system_time_;
-    std::string idle_time_;
-    std::string iowait_time_;
-    std::string irq_time_;
-    std::string softirq_time_;
-    std::string steal_time_;
-    std::string speed_;
+    uint32_t user_time_{};
+    uint32_t nice_time_{};
+    uint32_t system_time_{};
+    uint32_t idle_time_{};
+    uint32_t iowait_time_{};
+    uint32_t irq_time_{};
+    uint32_t softirq_time_{};
+    uint32_t steal_time_{};
+    time_point<system_clock> time_retrieved_ = system_clock::now();
 };
 
-// Returns lines from chosen data file that include specified keyword(s)
-std::vector<std::string> get_file_data(const std::string& file_path,
-                                       const std::vector<std::string_view>& substring) {
-    std::vector<std::string> file_data{};
-    std::ifstream file(file_path.c_str());
-
-    if (!file) {
-        std::cerr << "Uh oh, file could not be opened!" << '\n';
-        exit(1);
+std::optional<std::string_view> extract_token(std::string_view line) {
+    size_t start{line.find_first_not_of(" \t")};
+    if (start == std::string_view::npos) {
+        return std::nullopt;
     }
 
-    std::string file_line{};
-    while (getline(file, file_line)) {
-        for (const std::string_view word : substring) {
-            const unsigned long result{file_line.find(word)};
+    size_t end{line.find_first_of(" \t", start)};
+    std::string_view token =
+        (end == std::string_view::npos) ? line.substr(start) : line.substr(start, end - start);
 
-            if (result != std::string_view::npos) {
-                file_data.push_back(file_line);
-                continue;
-            }
+    line = (end == std::string_view::npos) ? std::string_view{} : line.substr(end);
+    return token;
+};
+
+template <typename T> std::optional<T> get_int(std::optional<std::string_view> token) {
+    T value;
+
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    auto [ptr, ec] = std::from_chars(token->data(), token->data() + token->size(), value);
+
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    if (ec == std::errc{} && ptr == token->data() + token->size()) {
+        return value;
+    }
+
+    return std::nullopt;
+};
+
+// Parses the /proc/stat file for cpu data
+std::optional<cpu> parse_cpu_data(std::string_view line) {
+    if (!line.starts_with("cpu")) {
+        return std::nullopt;
+    }
+
+    std::optional<std::string_view> token = extract_token(line);
+
+    auto name = token;
+    auto user_time = get_int<uint32_t>(token);
+    auto nice_time = get_int<uint32_t>(token);
+    auto system_time = get_int<uint32_t>(token);
+    auto idle_time = get_int<uint32_t>(token);
+    auto iowait_time = get_int<uint32_t>(token);
+    auto irq_time = get_int<uint32_t>(token);
+    auto softirq_time = get_int<uint32_t>(token);
+    auto steal_time = get_int<uint32_t>(token);
+
+    if (!name || !user_time || !nice_time || !system_time || !idle_time || !iowait_time ||
+        !irq_time || !softirq_time || !steal_time) {
+        return std::nullopt;
+    }
+
+    cpu processor;
+    processor.name_ = std::string{*name};
+    processor.user_time_ = *user_time;
+    processor.nice_time_ = *nice_time;
+    processor.system_time_ = *system_time;
+    processor.idle_time_ = *idle_time;
+    processor.iowait_time_ = *iowait_time;
+    processor.irq_time_ = *irq_time;
+    processor.softirq_time_ = *softirq_time;
+    processor.steal_time_ = *steal_time;
+
+    return processor;
+};
+
+std::optional<std::vector<cpu>> load_stat_file(const std::filesystem::path& path) {
+    std::ifstream file{path};
+    if (!file) {
+        std::cerr << "ERROR: cpu data file not found!" << '\n';
+        return std::nullopt;
+    }
+
+    std::vector<cpu> processors;
+
+    std::string line;
+
+    while (std::getline(file, line)) {
+        if (auto record = parse_cpu_data(line)) {
+            processors.push_back(std::move(*record));
         }
     }
 
-    return file_data;
+    return processors;
 };
-
-// Parses string into vector by specified delimiters
-std::vector<std::string_view> parse_data(std::string_view line, const char* delimiters) {
-    std::vector<std::string_view> tokens{};
-    size_t start{0};
-    size_t end{line.find(*delimiters)};
-
-    while (end != std::string_view::npos) {
-        tokens.push_back(line.substr(start, end - start));
-        start = end + 1;
-        end = line.find(*delimiters, start);
-    }
-    tokens.push_back(line.substr(start));
-
-    return tokens;
-};
-
-// Creates a multidimensional vector that separates data by values and by line
-std::vector<std::vector<std::string_view>>
-create_data_list(std::span<const std::string_view> file_data, const char delimiters) {
-    std::vector<std::vector<std::string_view>> data_list{};
-
-    for (std::string_view line : file_data) {
-        data_list.push_back(parse_data(line, &delimiters));
-    }
-
-    return data_list;
-};
-
-// Creates a new CPU object using data parsed from "/proc/stat" and "/proc/cpuinfo" for each
-// processor
-/* cpu create_processors() {
-
-}; */
